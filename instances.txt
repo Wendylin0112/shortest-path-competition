@@ -1,0 +1,14 @@
+ROAD     instances/road_small.graph     instances/road_small.queries
+GRID     instances/grid_small.graph     instances/grid_small.queries
+CLUSTER  instances/cluster_small.graph  instances/cluster_small.queries
+SOCIAL   instances/social_small.graph   instances/social_small.queries
+
+ROAD     instances/road_medium.graph    instances/road_medium.queries
+GRID     instances/grid_medium.graph    instances/grid_medium.queries
+CLUSTER  instances/cluster_medium.graph instances/cluster_medium.queries
+SOCIAL   instances/social_medium.graph  instances/social_medium.queries
+
+ROAD     instances/road_large.graph     instances/road_large.queries
+GRID     instances/grid_large.graph     instances/grid_large.queries
+CLUSTER  instances/cluster_large.graph  instances/cluster_large.queries
+SOCIAL   instances/social_large.graph   instances/social_large.queries

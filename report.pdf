@@ -1,0 +1,75 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> >> /Contents 7 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+7 0 obj
+<< /Length 3738 >>
+stream
+BT /F2 15.0 Tf 54.0 760.0 Td (Shortest-Path Competition Solver Report) Tj ET
+BT /F1 9.5 Tf 54.0 742.0 Td (Final solver: CSR + exact ALT landmarks + bucket queues) Tj ET
+BT /F2 10.2 Tf 54.0 720.0 Td (Interface and Correctness) Tj ET
+BT /F1 8.3 Tf 66.0 708.0 Td (- Required CLI kept: ./solver <graph_file> <query_file> <output_file>.) Tj ET
+BT /F1 8.3 Tf 66.0 698.0 Td (- The implementation is derived from foundation Dijkstra and returns exact shortest-path distances.) Tj ET
+BT /F1 8.3 Tf 66.0 688.0 Td (- The final full local grade.py run reported ok on all 12 released instances.) Tj ET
+BT /F2 10.2 Tf 54.0 673.0 Td (Main Optimizations) Tj ET
+BT /F1 8.3 Tf 66.0 661.0 Td (- CSR adjacency arrays, whole-file input, buffered output, and generation counters reduce overhead.) Tj ET
+BT /F1 8.3 Tf 66.0 651.0 Td (- Exact ALT/A* uses 24 farthest-first landmarks, including SOCIAL graphs without coordinates.) Tj ET
+BT /F1 8.3 Tf 66.0 641.0 Td (- GRID/SOCIAL low-diameter graphs use Dial buckets and compact int16 landmark tables when safe.) Tj ET
+BT /F1 8.3 Tf 66.0 631.0 Td (- ROAD uses unidirectional ALT plus bitmap buckets; CLUSTER uses bidirectional ALT with an 8-ary heap.) Tj ET
+BT /F1 8.3 Tf 66.0 621.0 Td (- SOCIAL initializes a landmark-derived upper bound min_k d\(s,L_k\)+d\(L_k,t\) for exact-safe pruning.) Tj ET
+BT /F2 10.2 Tf 54.0 606.0 Td (Full Local Grade.py Measurements) Tj ET
+BT /F1 7.4 Tf 66.0 594.0 Td (Command: python3 grade.py --foundation ./foundation --solver ./solver --instances instances.txt --progress) Tj ET
+BT /F3 7.2 Tf 66.0 582.0 Td (Cat      Instance              T_base     T_solver   Speedup  Note) Tj ET
+BT /F3 7.2 Tf 66.0 573.5 Td (ROAD     road_small.graph         4.3011     0.1951    22.042  ok) Tj ET
+BT /F3 7.2 Tf 66.0 565.0 Td (GRID     grid_small.graph         4.4041     0.0952    46.256  ok) Tj ET
+BT /F3 7.2 Tf 66.0 556.5 Td (CLUSTER  cluster_small.graph      4.9962     0.3745    13.341  ok) Tj ET
+BT /F3 7.2 Tf 66.0 548.0 Td (SOCIAL   social_small.graph      13.2219     0.1994    66.296  ok) Tj ET
+BT /F3 7.2 Tf 66.0 539.5 Td (ROAD     road_medium.graph       62.7959     1.4695    42.733  ok) Tj ET
+BT /F3 7.2 Tf 66.0 531.0 Td (GRID     grid_medium.graph       47.1362     0.7804    60.401  ok) Tj ET
+BT /F3 7.2 Tf 66.0 522.5 Td (CLUSTER  cluster_medium.graph    76.3894     1.6086    47.487  ok) Tj ET
+BT /F3 7.2 Tf 66.0 514.0 Td (SOCIAL   social_medium.graph    244.1336     3.0551    79.910  ok) Tj ET
+BT /F3 7.2 Tf 66.0 505.5 Td (ROAD     road_large.graph       904.8340    13.7633    65.743  ok) Tj ET
+BT /F3 7.2 Tf 66.0 497.0 Td (GRID     grid_large.graph       587.3162     9.4342    62.254  ok) Tj ET
+BT /F3 7.2 Tf 66.0 488.5 Td (CLUSTER  cluster_large.graph    1079.0337    10.6161   100.000  ok) Tj ET
+BT /F3 7.2 Tf 66.0 480.0 Td (SOCIAL   social_large.graph     3620.3446    21.6503   100.000  ok) Tj ET
+BT /F2 10.2 Tf 54.0 464.5 Td (Geometric Means) Tj ET
+BT /F3 7.6 Tf 66.0 452.5 Td (CLUSTER  39.865 \(n=3\)    GRID 55.821 \(n=3\)    ROAD 39.563 \(n=3\)    SOCIAL 80.915 \(n=3\)) Tj ET
+BT /F3 7.6 Tf 66.0 442.5 Td (Algorithm track 44.486 \(n=9\)    Engineering track 80.915 \(n=3\)    Overall 51.662 \(n=12\)) Tj ET
+BT /F2 10.2 Tf 54.0 428.5 Td (Comparison and Reproducibility) Tj ET
+BT /F1 7.8 Tf 66.0 416.5 Td (Compared with the fastest reference-style local large run before SOCIAL ALT:) Tj ET
+BT /F1 7.8 Tf 66.0 406.5 Td (road 14.0391->13.7633 s, grid 9.6468->9.4342 s, cluster 11.3167->10.6161 s, social 68.5482->21.6503 s.) Tj ET
+BT /F1 7.8 Tf 66.0 396.5 Td (Large-tier geometric improvement over that local reference is about 1.36x.) Tj ET
+BT /F1 7.8 Tf 66.0 386.5 Td (Prefetch/SIMD intrinsics were left out so the final code remains ISO C++17/std-library-only.) Tj ET
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000267 00000 n 
+0000000337 00000 n 
+0000000412 00000 n 
+0000000480 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+4269
+%%EOF

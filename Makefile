@@ -1,5 +1,5 @@
 CXX      ?= c++
-CXXFLAGS ?= -O2 -std=c++17 -Wall -Wextra
+CXXFLAGS ?= -O3 -flto -std=c++17 -Wall -Wextra -DNDEBUG
 
 # macOS workaround: some Command Line Tools installs are missing headers in
 # /Library/Developer/CommandLineTools/usr/include/c++/v1 (only a handful of

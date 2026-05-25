@@ -74,6 +74,8 @@ def main():
     ap.add_argument("--foundation", required=True, type=Path)
     ap.add_argument("--solver",     required=True, type=Path)
     ap.add_argument("--instances",  required=True, type=Path)
+    ap.add_argument("--progress", action="store_true",
+                    help="print progress while evaluating instances")
     args = ap.parse_args()
 
     # Resolve binaries so subprocess doesn't try PATH-lookup on "foundation".
@@ -98,6 +100,9 @@ def main():
         for i, (cat, gpath, qpath) in enumerate(instances):
             ref_out = td / f"{i}.ref"
             stu_out = td / f"{i}.stu"
+
+            if args.progress:
+                print(f"[{i+1}/{len(instances)}] {cat} {gpath.name} ...", flush=True)
 
             t_base = best_of(args.foundation, gpath, qpath, ref_out, REPEATS)
             t_stu  = best_of(args.solver,     gpath, qpath, stu_out, REPEATS)

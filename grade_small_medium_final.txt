@@ -1,0 +1,27 @@
+[1/8] ROAD road_small.graph ...
+[2/8] GRID grid_small.graph ...
+[3/8] CLUSTER cluster_small.graph ...
+[4/8] SOCIAL social_small.graph ...
+[5/8] ROAD road_medium.graph ...
+[6/8] GRID grid_medium.graph ...
+[7/8] CLUSTER cluster_medium.graph ...
+[8/8] SOCIAL social_medium.graph ...
+category instance                     T_base   T_solver   speedup  note
+------------------------------------------------------------------------------
+ROAD     road_small.graph             4.9485     0.2436    20.311  ok
+GRID     grid_small.graph             4.9800     0.1550    32.120  ok
+CLUSTER  cluster_small.graph          6.3811     0.4759    13.409  ok
+SOCIAL   social_small.graph          19.0403     0.2902    65.604  ok
+ROAD     road_medium.graph           94.9532     2.1469    44.228  ok
+GRID     grid_medium.graph           66.6734     1.1242    59.310  ok
+CLUSTER  cluster_medium.graph       110.4704     2.7887    39.614  ok
+SOCIAL   social_medium.graph        322.4998     3.7693    85.559  ok
+
+CLUSTER  geomean = 23.048  (n=2)
+GRID     geomean = 43.647  (n=2)
+ROAD     geomean = 29.972  (n=2)
+SOCIAL   geomean = 74.920  (n=2)
+
+Algorithm track   geomean = 31.124  (n=6)
+Engineering track geomean = 74.920  (n=2)
+Overall           geomean = 38.768  (n=8)
