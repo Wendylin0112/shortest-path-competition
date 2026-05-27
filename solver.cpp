@@ -35,8 +35,21 @@
 #include <utility>
 #include <functional>
 #include <chrono>
+#include <string>
+#include <numeric>
+
+#include "src/arcflags.h"
+#include "src/landmarks.h"
+#include "src/query_grouping.h"
+#include "src/reach.h"
 
 using std::vector;
+
+#if defined(__GNUC__) || defined(__clang__)
+#define SPC_COLD __attribute__((cold, noinline))
+#else
+#define SPC_COLD
+#endif
 
 // ---------------------------------------------------------------------------
 // File input: slurp the whole file into a heap buffer with <cstdio>.
@@ -104,6 +117,14 @@ struct Parser {
         p = endp;
         return v;
     }
+    inline void skip_token() {
+        skip_ws();
+        while (p < end) {
+            char c = *p;
+            if (c == ' ' || c == '\n' || c == '\r' || c == '\t') break;
+            ++p;
+        }
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -169,9 +190,11 @@ struct CSR {
     vector<int32_t>  head;      // size V+1
     vector<int32_t>  to;        // size E
     vector<int32_t>  w;         // size E
+    vector<double>   x;         // size V when HAS_COORDS
+    vector<double>   y;         // size V when HAS_COORDS
 };
 
-static void build_csr(const char* path, CSR& g) {
+static void build_csr(const char* path, CSR& g, bool keep_coords = false) {
     FileIn in;
     if (!in.open_file(path)) {
         std::fprintf(stderr, "cannot open graph file: %s\n", path);
@@ -224,9 +247,30 @@ static void build_csr(const char* path, CSR& g) {
     }
     // Coordinates are present for road/grid/cluster but unused.
     // Consume them anyway so a future caller can resume the parser cleanly.
-    if (g.HAS_COORDS) {
-        for (int32_t i = 0; i < g.V; ++i) { (void)ps.f64(); (void)ps.f64(); }
+    if (g.HAS_COORDS && keep_coords) {
+        g.x.resize((size_t)g.V);
+        g.y.resize((size_t)g.V);
+        for (int32_t i = 0; i < g.V; ++i) {
+            g.x[(size_t)i] = ps.f64();
+            g.y[(size_t)i] = ps.f64();
+        }
+    } else if (g.HAS_COORDS) {
+        for (int32_t i = 0; i < g.V; ++i) { ps.skip_token(); ps.skip_token(); }
     }
+}
+
+static SPGraphView graph_view(const CSR& g) {
+    SPGraphView v;
+    v.V = g.V;
+    v.E = g.E;
+    v.max_w = g.max_w;
+    v.has_coords = g.HAS_COORDS != 0;
+    v.head = &g.head;
+    v.to = &g.to;
+    v.w = &g.w;
+    v.x = &g.x;
+    v.y = &g.y;
+    return v;
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +528,55 @@ struct BucketQueue {
     }
 };
 
+struct TouchedBucketQueue {
+    vector<vector<int32_t>> buckets;
+    vector<int32_t> touched;
+    vector<uint8_t> in_touched;
+    int64_t current = 0;
+    size_t  count   = 0;
+    int64_t mask    = 0;
+
+    void init(int32_t max_edge_w) {
+        int64_t modulo = 1;
+        while (modulo < (int64_t)max_edge_w + 1) modulo <<= 1;
+        mask = modulo - 1;
+        buckets.assign((size_t)modulo, {});
+        in_touched.assign((size_t)modulo, 0);
+        touched.reserve(4096);
+    }
+    inline void clear() {
+        for (int32_t bi : touched) {
+            buckets[(size_t)bi].clear();
+            in_touched[(size_t)bi] = 0;
+        }
+        touched.clear();
+        current = 0;
+        count = 0;
+    }
+    inline bool empty() const { return count == 0; }
+    inline void push(int64_t key, int32_t v) {
+        int32_t bi = (int32_t)(key & mask);
+        if (!in_touched[(size_t)bi]) {
+            in_touched[(size_t)bi] = 1;
+            touched.push_back(bi);
+        }
+        buckets[(size_t)bi].push_back(v);
+        ++count;
+    }
+    inline int64_t top_key() {
+        while (count != 0 && buckets[(size_t)(current & mask)].empty())
+            ++current;
+        return count == 0 ? INT64_MAX : current;
+    }
+    inline int32_t pop() {
+        vector<int32_t>& b = buckets[(size_t)(current & mask)];
+        int32_t v = b.back();
+        b.pop_back();
+        --count;
+        return v;
+    }
+};
+
 // Portable count-trailing-zeros for a non-zero uint64_t.  Returns the index
 // (0..63) of the lowest set bit.  Behaviour on input 0 is undefined (caller
 // must guard).  De Bruijn multiplication trick (Leiserson/Prokop 1998): one
@@ -492,6 +585,9 @@ struct BucketQueue {
 // scan (e.g. x86 BSF) the optimizer often recognises this pattern and emits
 // it anyway -- but the source stays portable ISO C++17.
 static inline int32_t ctz64(uint64_t x) {
+#if defined(__GNUC__) || defined(__clang__)
+    return (int32_t)__builtin_ctzll(x);
+#else
     // `x & -x` isolates the lowest set bit.
     static const int32_t debruijn_index[64] = {
          0,  1, 48,  2, 57, 49, 28,  3,
@@ -506,6 +602,7 @@ static inline int32_t ctz64(uint64_t x) {
     // `x & -x` isolates the lowest set bit (well-defined unsigned wrap).
     uint64_t low_bit = x & (uint64_t)(0 - x);
     return debruijn_index[(low_bit * 0x03f79d71b4cb0a89ULL) >> 58];
+#endif
 }
 
 // Phase G13: cyclic bucket queue augmented with a non-empty bitmap.  Same Dial
@@ -861,6 +958,21 @@ static int64_t bidir_dijkstra_bucket(const CSR& g, BidirState& st,
 #ifndef SOLVER_SOCIAL_UPPER
 #define SOLVER_SOCIAL_UPPER 1
 #endif
+#ifndef SOLVER_GRID_UNIDIR_BUCKET
+#define SOLVER_GRID_UNIDIR_BUCKET 1
+#endif
+#ifndef SOLVER_PREP_TOUCHED_BUCKET
+#define SOLVER_PREP_TOUCHED_BUCKET 0
+#endif
+#ifndef SOLVER_CLUSTER_OVERLAY_MIN_V
+#define SOLVER_CLUSTER_OVERLAY_MIN_V 0
+#endif
+#ifndef SOLVER_ALT_BBQ_MAX_W
+#define SOLVER_ALT_BBQ_MAX_W 16384
+#endif
+#ifndef SOLVER_SORT_QUERIES
+#define SOLVER_SORT_QUERIES 0
+#endif
 static constexpr int32_t ALT_K = SOLVER_ALT_K;
 
 struct ALTIndex {
@@ -936,16 +1048,17 @@ static void alt_dijkstra_fill(const CSR& g, int32_t src, ALTIndex& alt,
     commit_dijkstra_to_dL(tmp, alt, k, V);
 }
 
-// Plain Dijkstra from `src` using a cyclic bucket queue (Phase G4).  A full
-// Dijkstra settles every vertex, so the heap's O(log n) per op dominates --
-// the bucket queue's O(1) push/pop wins (road full Dijkstra: ~220M heap ops
-// vs ~47M bucket ops).  Only used when max edge weight is modest enough that
-// the bucket array (max_w+1 vectors) is affordable.
-static void alt_dijkstra_fill_bucket(const CSR& g, int32_t src, ALTIndex& alt,
-                                     int32_t k, BucketQueue& bq,
-                                     vector<int64_t>& tmp) {
+// Plain Dijkstra from `src` using a touched cyclic bucket queue for ALT
+// preprocessing.  Full Dijkstra touches many buckets, but usually not every
+// vector in the modulo-sized ring.  Tracking touched bucket ids avoids clearing
+// untouched vectors between landmark runs while leaving query-time queues
+// unchanged.
+static void alt_dijkstra_fill_touched_bucket(const CSR& g, int32_t src,
+                                             ALTIndex& alt, int32_t k,
+                                             TouchedBucketQueue& bq,
+                                             vector<int64_t>& tmp) {
     int32_t V = g.V;
-    const int32_t* gh = g.head.data();   // Phase G9
+    const int32_t* gh = g.head.data();
     const int32_t* gt = g.to.data();
     const int32_t* gw = g.w.data();
     for (int32_t v = 0; v < V; ++v) tmp[(size_t)v] = INT64_MAX;
@@ -954,7 +1067,36 @@ static void alt_dijkstra_fill_bucket(const CSR& g, int32_t src, ALTIndex& alt,
     bq.clear();
     bq.push(0, src);
     while (!bq.empty()) {
-        int64_t d = bq.top_key();      // entry key == current (Dial invariant)
+        int64_t d = bq.top_key();
+        int32_t u = bq.pop();
+        if (d != tmp[(size_t)u]) continue;
+        int32_t es = gh[u], ee = gh[u + 1];
+        for (int32_t i = es; i < ee; ++i) {
+            int32_t v = gt[i];
+            int64_t nd = d + (int64_t)gw[i];
+            if (nd < tmp[(size_t)v]) {
+                tmp[(size_t)v] = nd;
+                bq.push(nd, v);
+            }
+        }
+    }
+    commit_dijkstra_to_dL(tmp, alt, k, V);
+}
+
+static void alt_dijkstra_fill_bucket(const CSR& g, int32_t src, ALTIndex& alt,
+                                     int32_t k, BucketQueue& bq,
+                                     vector<int64_t>& tmp) {
+    int32_t V = g.V;
+    const int32_t* gh = g.head.data();
+    const int32_t* gt = g.to.data();
+    const int32_t* gw = g.w.data();
+    for (int32_t v = 0; v < V; ++v) tmp[(size_t)v] = INT64_MAX;
+    tmp[(size_t)src] = 0;
+
+    bq.clear_from(0);
+    bq.push(0, src);
+    while (!bq.empty()) {
+        int64_t d = bq.top_key();
         int32_t u = bq.pop();
         if (d != tmp[(size_t)u]) continue;
         int32_t es = gh[u], ee = gh[u + 1];
@@ -985,12 +1127,22 @@ static void alt_build(const CSR& g, ALTIndex& alt) {
     bool use_bucket = (g.max_w <= ALT_PREP_BUCKET_MAX_W);
 
     Heap4       h;
-    BucketQueue bq;
-    if (use_bucket) bq.init(g.max_w);
+    TouchedBucketQueue bq;
+    BucketQueue plain_bq;
+    if (use_bucket) {
+        if (SOLVER_PREP_TOUCHED_BUCKET) bq.init(g.max_w);
+        else plain_bq.init(g.max_w);
+    }
 
     auto fill = [&](int32_t src, int32_t k) {
-        if (use_bucket) alt_dijkstra_fill_bucket(g, src, alt, k, bq, tmp);
-        else            alt_dijkstra_fill       (g, src, alt, k, h,  tmp);
+        if (use_bucket) {
+            if (SOLVER_PREP_TOUCHED_BUCKET)
+                alt_dijkstra_fill_touched_bucket(g, src, alt, k, bq, tmp);
+            else
+                alt_dijkstra_fill_bucket(g, src, alt, k, plain_bq, tmp);
+        } else {
+            alt_dijkstra_fill(g, src, alt, k, h, tmp);
+        }
     };
 
     // L[0] = vertex 0 (deterministic).  For random pairs farthest-first quickly
@@ -1053,6 +1205,7 @@ static void alt_build(const CSR& g, ALTIndex& alt) {
             // grid_large: 144MB, well under the 4GB cap.
         }
     }
+
 }
 
 // ALT heuristic kernel: h(v, T) = max_k |dLv[k] - T[k]|, skipping saturated
@@ -1077,6 +1230,31 @@ static inline int64_t alt_h(const int32_t* dLv, const int32_t* T) {
     return (int64_t)best;
 }
 
+static inline int64_t alt_h_delta(const int32_t* dLv,
+                                  const int32_t* A,
+                                  const int32_t* B) {
+    int32_t best_a = 0;
+    int32_t best_b = 0;
+    for (int32_t k = 0; k < ALT_K; ++k) {
+        int32_t dv = dLv[k];
+        int32_t av = A[k];
+        int32_t bv = B[k];
+
+        int32_t da = dv - av;
+        int32_t aa = da < 0 ? -da : da;
+        int32_t sat_a = -(int32_t)((dv == INT32_MAX) | (av == INT32_MAX));
+        aa &= ~sat_a;
+        best_a = aa > best_a ? aa : best_a;
+
+        int32_t db = dv - bv;
+        int32_t ab = db < 0 ? -db : db;
+        int32_t sat_b = -(int32_t)((dv == INT32_MAX) | (bv == INT32_MAX));
+        ab &= ~sat_b;
+        best_b = ab > best_b ? ab : best_b;
+    }
+    return (int64_t)best_a - (int64_t)best_b;
+}
+
 // Phase N10: int16 variant of alt_h, used only by alt_query_bucket_int16
 // (the grid bidir path).  Same algorithm as alt_h above, but the dL row is
 // 48B (24 * int16) instead of 96B (24 * int32) -- one fewer cache line per
@@ -1094,6 +1272,31 @@ static inline int64_t alt_h_int16(const int16_t* dLv, const int16_t* T) {
         best = a > best ? a : best;
     }
     return (int64_t)best;
+}
+
+static inline int64_t alt_h_delta_int16(const int16_t* dLv,
+                                        const int16_t* A,
+                                        const int16_t* B) {
+    int32_t best_a = 0;
+    int32_t best_b = 0;
+    for (int32_t k = 0; k < ALT_K; ++k) {
+        int32_t dv = dLv[k];
+        int32_t av = A[k];
+        int32_t bv = B[k];
+
+        int32_t da = dv - av;
+        int32_t aa = da < 0 ? -da : da;
+        int32_t sat_a = -(int32_t)((dv == INT16_MAX) | (av == INT16_MAX));
+        aa &= ~sat_a;
+        best_a = aa > best_a ? aa : best_a;
+
+        int32_t db = dv - bv;
+        int32_t ab = db < 0 ? -db : db;
+        int32_t sat_b = -(int32_t)((dv == INT16_MAX) | (bv == INT16_MAX));
+        ab &= ~sat_b;
+        best_b = ab > best_b ? ab : best_b;
+    }
+    return (int64_t)best_a - (int64_t)best_b;
 }
 
 // Unidirectional A* with ALT heuristic.  Kept alongside the bidirectional
@@ -1204,6 +1407,59 @@ static int64_t alt_unidir_query_bbq(const CSR& g, const ALTIndex& alt,
     return -1;
 }
 
+// Grid-only experiment: unidirectional A* on the plain Dial queue, using the
+// compact int16 landmark table.  For normal f = g + h keys, consistency bounds
+// every relaxed key increase by 2*max_w, tighter than the bidirectional scaled
+// potential queue's 4*max_w bound.  The dispatcher can enable this for GRID
+// without touching road/cluster/social behavior.
+static int64_t alt_unidir_query_bucket_int16(const CSR& g, const ALTIndex& alt,
+                                             BidirState& st, int32_t s, int32_t t) {
+    if (s == t) return 0;
+    st.next_gen();
+    uint32_t cg = st.cur_gen;
+
+    const int32_t* gh = g.head.data();
+    const int32_t* gt = g.to.data();
+    const int32_t* gw = g.w.data();
+
+    int16_t hT[ALT_K];
+    const int16_t* dLt = &alt.dL16[(size_t)t * ALT_K];
+    for (int32_t k = 0; k < ALT_K; ++k) hT[k] = dLt[k];
+
+    auto h_of = [&](int32_t v) -> int64_t {
+        return alt_h_int16(&alt.dL16[(size_t)v * ALT_K], hT);
+    };
+
+    int64_t h_s = h_of(s);
+    st.bq_f.clear_from(h_s);
+    st.nf[(size_t)s].dist = 0;
+    st.nf[(size_t)s].gen = cg;
+    st.bq_f.push(h_s, s);
+
+    while (!st.bq_f.empty()) {
+        (void)st.bq_f.top_key();
+        int32_t u = st.bq_f.pop();
+        if (st.nf[(size_t)u].set == cg) continue;
+        st.nf[(size_t)u].set = cg;
+        int64_t du = st.nf[(size_t)u].dist;
+
+        if (u == t) return du;
+
+        int32_t es = gh[u], ee = gh[u + 1];
+        for (int32_t i = es; i < ee; ++i) {
+            int32_t v = gt[i];
+            if (st.nf[(size_t)v].set == cg) continue;
+            int64_t nd = du + (int64_t)gw[i];
+            if (st.nf[(size_t)v].gen != cg || nd < st.nf[(size_t)v].dist) {
+                st.nf[(size_t)v].dist = nd;
+                st.nf[(size_t)v].gen = cg;
+                st.bq_f.push(nd + h_of(v), v);
+            }
+        }
+    }
+    return -1;
+}
+
 // Bidirectional A* with ALT heuristic, using the balanced-potential trick of
 // Goldberg & Harrelson 2003 ("Computing the Shortest Path: A* Search Meets
 // Graph Theory").
@@ -1244,7 +1500,9 @@ static int64_t alt_query(const CSR& g, const ALTIndex& alt, BidirState& st,
     auto h_lm = [&](int32_t v, const int32_t* T) -> int64_t {
         return alt_h(&alt.dL[(size_t)v * ALT_K], T);
     };
-
+    auto h_delta = [&](int32_t v, const int32_t* A, const int32_t* B) -> int64_t {
+        return alt_h_delta(&alt.dL[(size_t)v * ALT_K], A, B);
+    };
     st.heap_f.clear();
     st.heap_b.clear();
 
@@ -1289,7 +1547,7 @@ static int64_t alt_query(const CSR& g, const ALTIndex& alt, BidirState& st,
                 if (st.nf[(size_t)v].gen != cg || nd < st.nf[(size_t)v].dist) {
                     st.nf[(size_t)v].dist = nd;
                     st.nf[(size_t)v].gen = cg;
-                    int64_t key = 2 * nd + h_lm(v, hT) - h_lm(v, hS);
+                    int64_t key = 2 * nd + h_delta(v, hT, hS);
                     st.heap_f.push(key, v);
                 }
             }
@@ -1313,7 +1571,7 @@ static int64_t alt_query(const CSR& g, const ALTIndex& alt, BidirState& st,
                 if (st.nb[(size_t)v].gen != cg || nd < st.nb[(size_t)v].dist) {
                     st.nb[(size_t)v].dist = nd;
                     st.nb[(size_t)v].gen = cg;
-                    int64_t key = 2 * nd + h_lm(v, hS) - h_lm(v, hT);
+                    int64_t key = 2 * nd + h_delta(v, hS, hT);
                     st.heap_b.push(key, v);
                 }
             }
@@ -1357,6 +1615,9 @@ static int64_t alt_query_bucket(const CSR& g, const ALTIndex& alt, BidirState& s
     auto h_lm = [&](int32_t v, const int32_t* T) -> int64_t {
         return alt_h(&alt.dL[(size_t)v * ALT_K], T);
     };
+    auto h_delta = [&](int32_t v, const int32_t* A, const int32_t* B) -> int64_t {
+        return alt_h_delta(&alt.dL[(size_t)v * ALT_K], A, B);
+    };
 
     // Both heaps start with key h(s,t); seed each queue's `current` to it so
     // Dial's "current == popped key" invariant holds (see clear_from()).
@@ -1395,7 +1656,7 @@ static int64_t alt_query_bucket(const CSR& g, const ALTIndex& alt, BidirState& s
                 if (st.nf[(size_t)v].gen != cg || nd < st.nf[(size_t)v].dist) {
                     st.nf[(size_t)v].dist = nd;
                     st.nf[(size_t)v].gen = cg;
-                    int64_t key = 2 * nd + h_lm(v, hT) - h_lm(v, hS);
+                    int64_t key = 2 * nd + h_delta(v, hT, hS);
                     st.bq_f.push(key, v);
                 }
             }
@@ -1418,7 +1679,7 @@ static int64_t alt_query_bucket(const CSR& g, const ALTIndex& alt, BidirState& s
                 if (st.nb[(size_t)v].gen != cg || nd < st.nb[(size_t)v].dist) {
                     st.nb[(size_t)v].dist = nd;
                     st.nb[(size_t)v].gen = cg;
-                    int64_t key = 2 * nd + h_lm(v, hS) - h_lm(v, hT);
+                    int64_t key = 2 * nd + h_delta(v, hS, hT);
                     st.bq_b.push(key, v);
                 }
             }
@@ -1451,6 +1712,9 @@ static int64_t alt_query_bucket_int16(const CSR& g, const ALTIndex& alt,
 
     auto h_lm = [&](int32_t v, const int16_t* T) -> int64_t {
         return alt_h_int16(&alt.dL16[(size_t)v * ALT_K], T);
+    };
+    auto h_delta = [&](int32_t v, const int16_t* A, const int16_t* B) -> int64_t {
+        return alt_h_delta_int16(&alt.dL16[(size_t)v * ALT_K], A, B);
     };
 
     int64_t h_s_t = h_lm(s, hT);
@@ -1488,7 +1752,7 @@ static int64_t alt_query_bucket_int16(const CSR& g, const ALTIndex& alt,
                 if (st.nf[(size_t)v].gen != cg || nd < st.nf[(size_t)v].dist) {
                     st.nf[(size_t)v].dist = nd;
                     st.nf[(size_t)v].gen = cg;
-                    int64_t key = 2 * nd + h_lm(v, hT) - h_lm(v, hS);
+                    int64_t key = 2 * nd + h_delta(v, hT, hS);
                     st.bq_f.push(key, v);
                 }
             }
@@ -1511,7 +1775,7 @@ static int64_t alt_query_bucket_int16(const CSR& g, const ALTIndex& alt,
                 if (st.nb[(size_t)v].gen != cg || nd < st.nb[(size_t)v].dist) {
                     st.nb[(size_t)v].dist = nd;
                     st.nb[(size_t)v].gen = cg;
-                    int64_t key = 2 * nd + h_lm(v, hS) - h_lm(v, hT);
+                    int64_t key = 2 * nd + h_delta(v, hS, hT);
                     st.bq_b.push(key, v);
                 }
             }
@@ -1554,6 +1818,9 @@ static int64_t alt_query_bucket_int16_social(const CSR& g, const ALTIndex& alt,
     auto h_lm = [&](int32_t v, const int16_t* T) -> int64_t {
         return alt_h_int16(&alt.dL16[(size_t)v * ALT_K], T);
     };
+    auto h_delta = [&](int32_t v, const int16_t* A, const int16_t* B) -> int64_t {
+        return alt_h_delta_int16(&alt.dL16[(size_t)v * ALT_K], A, B);
+    };
 
     int64_t h_s_t = h_lm(s, hT);
     if (mu != INT64_MAX && h_s_t >= mu) return mu;
@@ -1590,7 +1857,7 @@ static int64_t alt_query_bucket_int16_social(const CSR& g, const ALTIndex& alt,
                 if (st.nf[(size_t)v].gen != cg || nd < st.nf[(size_t)v].dist) {
                     st.nf[(size_t)v].dist = nd;
                     st.nf[(size_t)v].gen = cg;
-                    int64_t key = 2 * nd + h_lm(v, hT) - h_lm(v, hS);
+                    int64_t key = 2 * nd + h_delta(v, hT, hS);
                     st.bq_f.push(key, v);
                 }
             }
@@ -1614,7 +1881,7 @@ static int64_t alt_query_bucket_int16_social(const CSR& g, const ALTIndex& alt,
                 if (st.nb[(size_t)v].gen != cg || nd < st.nb[(size_t)v].dist) {
                     st.nb[(size_t)v].dist = nd;
                     st.nb[(size_t)v].gen = cg;
-                    int64_t key = 2 * nd + h_lm(v, hS) - h_lm(v, hT);
+                    int64_t key = 2 * nd + h_delta(v, hS, hT);
                     st.bq_b.push(key, v);
                 }
             }
@@ -1647,6 +1914,9 @@ static int64_t alt_query_bbq(const CSR& g, const ALTIndex& alt, BidirState& st,
 
     auto h_lm = [&](int32_t v, const int32_t* T) -> int64_t {
         return alt_h(&alt.dL[(size_t)v * ALT_K], T);
+    };
+    auto h_delta = [&](int32_t v, const int32_t* A, const int32_t* B) -> int64_t {
+        return alt_h_delta(&alt.dL[(size_t)v * ALT_K], A, B);
     };
 
     int64_t h_s_t = h_lm(s, hT);
@@ -1684,7 +1954,7 @@ static int64_t alt_query_bbq(const CSR& g, const ALTIndex& alt, BidirState& st,
                 if (st.nf[(size_t)v].gen != cg || nd < st.nf[(size_t)v].dist) {
                     st.nf[(size_t)v].dist = nd;
                     st.nf[(size_t)v].gen = cg;
-                    int64_t key = 2 * nd + h_lm(v, hT) - h_lm(v, hS);
+                    int64_t key = 2 * nd + h_delta(v, hT, hS);
                     st.bbq_f.push(key, v);
                 }
             }
@@ -1707,7 +1977,7 @@ static int64_t alt_query_bbq(const CSR& g, const ALTIndex& alt, BidirState& st,
                 if (st.nb[(size_t)v].gen != cg || nd < st.nb[(size_t)v].dist) {
                     st.nb[(size_t)v].dist = nd;
                     st.nb[(size_t)v].gen = cg;
-                    int64_t key = 2 * nd + h_lm(v, hS) - h_lm(v, hT);
+                    int64_t key = 2 * nd + h_delta(v, hS, hT);
                     st.bbq_b.push(key, v);
                 }
             }
@@ -2132,6 +2402,210 @@ static int64_t ch_query(const CHIndex& ch, BidirState& st,
 #endif  // CH disabled
 
 // ---------------------------------------------------------------------------
+// Cluster overlay shortcuts (experimental, exact)
+//
+// Cluster instances split cleanly if we union "local" edges (weight <= 80000).
+// Boundary count is tiny on small/medium (~100-200 vertices).  For every
+// boundary vertex b we store exact shortest distances from b to all vertices
+// inside b's component, restricted to the component-induced subgraph.  A dense
+// boundary overlay then connects:
+//   * boundary pairs inside one component by the precomputed local distance
+//   * boundary pairs across components by original cross edges
+// Floyd-Warshall closes the overlay.  For s/t in different components, every
+// full-graph path decomposes into:
+//   s -> source boundary -> overlay -> target boundary -> t
+// so the minimum over boundary pairs is exact. Same-component queries keep the
+// original ALT path because leaving and re-entering the component can be useful.
+// ---------------------------------------------------------------------------
+
+struct ClusterOverlay {
+    bool enabled = false;
+    int32_t V = 0;
+    int32_t B = 0;
+    vector<int32_t> comp;
+    vector<int32_t> local_id;
+    vector<vector<int32_t>> comp_vertices;
+    vector<vector<int32_t>> comp_bounds;
+    vector<int32_t> boundary_node;
+    vector<int32_t> boundary_comp;
+    vector<int32_t> boundary_id_of_node;
+    vector<vector<int32_t>> dist_from_boundary; // [bid][local vertex id]
+    vector<int64_t> overlay;                    // B x B
+};
+
+static void cluster_overlay_build(const CSR& g, ClusterOverlay& ov) {
+    ov = ClusterOverlay{};
+    if (!g.HAS_COORDS || g.V < SOLVER_CLUSTER_OVERLAY_MIN_V ||
+        g.V > 120000 || g.max_w <= 25000) return;
+    constexpr int32_t LOCAL_EDGE_W = 80000;
+
+    vector<int32_t> parent((size_t)g.V), sz((size_t)g.V, 1);
+    for (int32_t i = 0; i < g.V; ++i) parent[(size_t)i] = i;
+    auto find = [&](int32_t x) {
+        while (parent[(size_t)x] != x) {
+            parent[(size_t)x] = parent[(size_t)parent[(size_t)x]];
+            x = parent[(size_t)x];
+        }
+        return x;
+    };
+    auto unite = [&](int32_t a, int32_t b) {
+        int32_t ra = find(a), rb = find(b);
+        if (ra == rb) return;
+        if (sz[(size_t)ra] < sz[(size_t)rb]) std::swap(ra, rb);
+        parent[(size_t)rb] = ra;
+        sz[(size_t)ra] += sz[(size_t)rb];
+    };
+
+    for (int32_t u = 0; u < g.V; ++u) {
+        for (int32_t e = g.head[(size_t)u]; e < g.head[(size_t)u + 1]; ++e) {
+            int32_t v = g.to[(size_t)e];
+            if (u < v && g.w[(size_t)e] <= LOCAL_EDGE_W) unite(u, v);
+        }
+    }
+
+    vector<int32_t> root_to_comp((size_t)g.V, -1);
+    ov.comp.assign((size_t)g.V, -1);
+    ov.local_id.assign((size_t)g.V, -1);
+    for (int32_t v = 0; v < g.V; ++v) {
+        int32_t r = find(v);
+        int32_t& c = root_to_comp[(size_t)r];
+        if (c < 0) {
+            c = (int32_t)ov.comp_vertices.size();
+            ov.comp_vertices.push_back({});
+        }
+        ov.comp[(size_t)v] = c;
+        ov.local_id[(size_t)v] = (int32_t)ov.comp_vertices[(size_t)c].size();
+        ov.comp_vertices[(size_t)c].push_back(v);
+    }
+
+    ov.boundary_id_of_node.assign((size_t)g.V, -1);
+    auto ensure_boundary = [&](int32_t v) {
+        int32_t& id = ov.boundary_id_of_node[(size_t)v];
+        if (id >= 0) return id;
+        id = (int32_t)ov.boundary_node.size();
+        ov.boundary_node.push_back(v);
+        ov.boundary_comp.push_back(ov.comp[(size_t)v]);
+        return id;
+    };
+    struct CrossEdge { int32_t a, b, w; };
+    vector<CrossEdge> cross;
+    for (int32_t u = 0; u < g.V; ++u) {
+        for (int32_t e = g.head[(size_t)u]; e < g.head[(size_t)u + 1]; ++e) {
+            int32_t v = g.to[(size_t)e];
+            if (u < v && ov.comp[(size_t)u] != ov.comp[(size_t)v]) {
+                int32_t bu = ensure_boundary(u);
+                int32_t bv = ensure_boundary(v);
+                cross.push_back({bu, bv, g.w[(size_t)e]});
+            }
+        }
+    }
+    ov.B = (int32_t)ov.boundary_node.size();
+    if (ov.B == 0 || ov.B > 512) { ov = ClusterOverlay{}; return; }
+
+    ov.comp_bounds.assign(ov.comp_vertices.size(), {});
+    for (int32_t b = 0; b < ov.B; ++b)
+        ov.comp_bounds[(size_t)ov.boundary_comp[(size_t)b]].push_back(b);
+
+    ov.dist_from_boundary.resize((size_t)ov.B);
+    Heap4 heap;
+    vector<int64_t> dist64;
+    for (int32_t b = 0; b < ov.B; ++b) {
+        int32_t src = ov.boundary_node[(size_t)b];
+        int32_t c = ov.boundary_comp[(size_t)b];
+        int32_t n = (int32_t)ov.comp_vertices[(size_t)c].size();
+        dist64.assign((size_t)n, INT64_MAX);
+        dist64[(size_t)ov.local_id[(size_t)src]] = 0;
+        heap.clear();
+        heap.push(0, src);
+        while (!heap.empty()) {
+            HeapItem it = heap.pop();
+            int32_t u = it.val;
+            int64_t d = it.key;
+            int32_t lu = ov.local_id[(size_t)u];
+            if (d != dist64[(size_t)lu]) continue;
+            for (int32_t e = g.head[(size_t)u]; e < g.head[(size_t)u + 1]; ++e) {
+                int32_t v = g.to[(size_t)e];
+                if (ov.comp[(size_t)v] != c) continue;
+                int32_t lv = ov.local_id[(size_t)v];
+                int64_t nd = d + (int64_t)g.w[(size_t)e];
+                if (nd < dist64[(size_t)lv]) {
+                    dist64[(size_t)lv] = nd;
+                    heap.push(nd, v);
+                }
+            }
+        }
+        ov.dist_from_boundary[(size_t)b].resize((size_t)n);
+        for (int32_t i = 0; i < n; ++i) {
+            int64_t d = dist64[(size_t)i];
+            ov.dist_from_boundary[(size_t)b][(size_t)i] =
+                d >= (int64_t)INT32_MAX ? INT32_MAX : (int32_t)d;
+        }
+    }
+
+    const int64_t INF = INT64_MAX / 4;
+    ov.overlay.assign((size_t)ov.B * (size_t)ov.B, INF);
+    for (int32_t i = 0; i < ov.B; ++i) ov.overlay[(size_t)i * ov.B + i] = 0;
+    for (int32_t c = 0; c < (int32_t)ov.comp_bounds.size(); ++c) {
+        const vector<int32_t>& bs = ov.comp_bounds[(size_t)c];
+        for (int32_t bi : bs) {
+            const vector<int32_t>& rowdist = ov.dist_from_boundary[(size_t)bi];
+            for (int32_t bj : bs) {
+                int32_t node = ov.boundary_node[(size_t)bj];
+                int32_t d = rowdist[(size_t)ov.local_id[(size_t)node]];
+                if (d != INT32_MAX) ov.overlay[(size_t)bi * ov.B + bj] = d;
+            }
+        }
+    }
+    for (const CrossEdge& e : cross) {
+        int64_t& ab = ov.overlay[(size_t)e.a * ov.B + e.b];
+        int64_t& ba = ov.overlay[(size_t)e.b * ov.B + e.a];
+        if (e.w < ab) ab = e.w;
+        if (e.w < ba) ba = e.w;
+    }
+    for (int32_t k = 0; k < ov.B; ++k) {
+        for (int32_t i = 0; i < ov.B; ++i) {
+            int64_t dik = ov.overlay[(size_t)i * ov.B + k];
+            if (dik == INF) continue;
+            for (int32_t j = 0; j < ov.B; ++j) {
+                int64_t nd = dik + ov.overlay[(size_t)k * ov.B + j];
+                int64_t& dij = ov.overlay[(size_t)i * ov.B + j];
+                if (nd < dij) dij = nd;
+            }
+        }
+    }
+    ov.V = g.V;
+    ov.enabled = true;
+}
+
+static int64_t cluster_overlay_query(const ClusterOverlay& ov, int32_t s, int32_t t) {
+    if (!ov.enabled) return -1;
+    int32_t cs = ov.comp[(size_t)s], ct = ov.comp[(size_t)t];
+    if (cs == ct) return -1;
+    const vector<int32_t>& bs = ov.comp_bounds[(size_t)cs];
+    const vector<int32_t>& bt = ov.comp_bounds[(size_t)ct];
+    if (bs.empty() || bt.empty()) return -1;
+    const int64_t INF = INT64_MAX / 4;
+    int64_t best = INF;
+    int32_t ls = ov.local_id[(size_t)s];
+    int32_t lt = ov.local_id[(size_t)t];
+    for (int32_t bi : bs) {
+        int32_t ds32 = ov.dist_from_boundary[(size_t)bi][(size_t)ls];
+        if (ds32 == INT32_MAX) continue;
+        int64_t ds = ds32;
+        const int64_t* row = &ov.overlay[(size_t)bi * ov.B];
+        for (int32_t bj : bt) {
+            int64_t mid = row[bj];
+            if (mid == INF) continue;
+            int32_t dt32 = ov.dist_from_boundary[(size_t)bj][(size_t)lt];
+            if (dt32 == INT32_MAX) continue;
+            int64_t cand = ds + mid + (int64_t)dt32;
+            if (cand < best) best = cand;
+        }
+    }
+    return best == INF ? -1 : best;
+}
+
+// ---------------------------------------------------------------------------
 // Query loops
 // ---------------------------------------------------------------------------
 
@@ -2203,6 +2677,8 @@ static void run_queries_alt(const CSR& g, const ALTIndex& alt,
 
     BidirState st;
     st.init(g.V);
+    ClusterOverlay overlay;
+    cluster_overlay_build(g, overlay);
 
     // Phase G8: when the max edge weight is tiny the bidirectional ALT A* can
     // run on cyclic bucket queues instead of the 8-ary heap.  On the scaled
@@ -2213,7 +2689,10 @@ static void run_queries_alt(const CSR& g, const ALTIndex& alt,
     // distances) keep the heap.
     constexpr int32_t ALT_BUCKET_MAX_W = 256;
     bool bidir_use_bucket = (g.max_w <= ALT_BUCKET_MAX_W);
-    if (bidir_use_bucket) st.init_buckets(4 * g.max_w);
+    bool grid_unidir_bucket =
+        (SOLVER_GRID_UNIDIR_BUCKET != 0) && g.HAS_COORDS && alt.use_int16 &&
+        (g.max_w <= ALT_BUCKET_MAX_W);
+    if (bidir_use_bucket) st.init_buckets((grid_unidir_bucket ? 2 : 4) * g.max_w);
 
     // Phase G13b/c: bitmap-augmented bucket queue for the ALT search.  Unidir
     // f-key spread is bounded by 2*max_w, bidir scaled-key spread by 4*max_w
@@ -2230,11 +2709,12 @@ static void run_queries_alt(const CSR& g, const ALTIndex& alt,
     //
     // bbq_f and bbq_b are sized for the bidir bound (4*max_w) so either
     // run_unidir or run_bidir can use them safely.
-    constexpr int32_t ALT_BBQ_MAX_W = 16384;
+    constexpr int32_t ALT_BBQ_MAX_W = SOLVER_ALT_BBQ_MAX_W;
     bool use_bbq = !bidir_use_bucket && (g.max_w <= ALT_BBQ_MAX_W);
     if (use_bbq) st.init_bm_buckets(4 * g.max_w);
 
     auto run_unidir = [&](int32_t s, int32_t t) -> int64_t {
+        if (grid_unidir_bucket) return alt_unidir_query_bucket_int16(g, alt, st, s, t);
         return use_bbq ? alt_unidir_query_bbq(g, alt, st, s, t)
                        : alt_unidir_query    (g, alt, st, s, t);
     };
@@ -2261,7 +2741,8 @@ static void run_queries_alt(const CSR& g, const ALTIndex& alt,
 #elif SOLVER_FORCE_ALT_MODE == 2
     use_bidir = true;
 #elif SOLVER_FORCE_ALT_MODE == 3
-    use_bidir = (g.max_w <= ALT_BUCKET_MAX_W) || (g.max_w > 25000);
+    use_bidir = !grid_unidir_bucket &&
+                ((g.max_w <= ALT_BUCKET_MAX_W) || (g.max_w > 25000));
 #else
     // ---- Dispatcher probe ------------------------------------------------
     // Run the first PROBE queries with each mode, pick the faster mode for
@@ -2284,22 +2765,341 @@ static void run_queries_alt(const CSR& g, const ALTIndex& alt,
 #endif
 
     // ---- Bulk run --------------------------------------------------------
+#if SOLVER_SORT_QUERIES
+    vector<int32_t> order((size_t)Q);
+    for (int32_t i = 0; i < Q; ++i) order[(size_t)i] = i;
+    std::sort(order.begin(), order.end(), [&](int32_t a, int32_t b) {
+        int32_t sa = ss[(size_t)a], sb = ss[(size_t)b];
+        if (sa != sb) return sa < sb;
+        return tt[(size_t)a] < tt[(size_t)b];
+    });
+    vector<int64_t> ans((size_t)Q);
     if (use_bidir) {
-        for (int32_t i = 0; i < Q; ++i) {
-            int64_t d = run_bidir(ss[(size_t)i], tt[(size_t)i]);
-            ob.put_int64_nl(d);
+        if (overlay.enabled) {
+            for (int32_t qi : order) {
+                int32_t i = qi;
+                int64_t d = cluster_overlay_query(overlay, ss[(size_t)i], tt[(size_t)i]);
+                if (d < 0) d = run_bidir(ss[(size_t)i], tt[(size_t)i]);
+                ans[(size_t)i] = d;
+            }
+        } else {
+            for (int32_t qi : order) {
+                int32_t i = qi;
+                ans[(size_t)i] = run_bidir(ss[(size_t)i], tt[(size_t)i]);
+            }
         }
     } else {
-        for (int32_t i = 0; i < Q; ++i) {
-            int64_t d = run_unidir(ss[(size_t)i], tt[(size_t)i]);
-            ob.put_int64_nl(d);
+        if (overlay.enabled) {
+            for (int32_t qi : order) {
+                int32_t i = qi;
+                int64_t d = cluster_overlay_query(overlay, ss[(size_t)i], tt[(size_t)i]);
+                if (d < 0) d = run_unidir(ss[(size_t)i], tt[(size_t)i]);
+                ans[(size_t)i] = d;
+            }
+        } else {
+            for (int32_t qi : order) {
+                int32_t i = qi;
+                ans[(size_t)i] = run_unidir(ss[(size_t)i], tt[(size_t)i]);
+            }
+        }
+    }
+    for (int32_t i = 0; i < Q; ++i) ob.put_int64_nl(ans[(size_t)i]);
+#else
+    if (use_bidir) {
+        if (overlay.enabled) {
+            for (int32_t i = 0; i < Q; ++i) {
+                int64_t d = cluster_overlay_query(overlay, ss[(size_t)i], tt[(size_t)i]);
+                if (d < 0) d = run_bidir(ss[(size_t)i], tt[(size_t)i]);
+                ob.put_int64_nl(d);
+            }
+        } else {
+            for (int32_t i = 0; i < Q; ++i) {
+                ob.put_int64_nl(run_bidir(ss[(size_t)i], tt[(size_t)i]));
+            }
+        }
+    } else {
+        if (overlay.enabled) {
+            for (int32_t i = 0; i < Q; ++i) {
+                int64_t d = cluster_overlay_query(overlay, ss[(size_t)i], tt[(size_t)i]);
+                if (d < 0) d = run_unidir(ss[(size_t)i], tt[(size_t)i]);
+                ob.put_int64_nl(d);
+            }
+        } else {
+            for (int32_t i = 0; i < Q; ++i) {
+                ob.put_int64_nl(run_unidir(ss[(size_t)i], tt[(size_t)i]));
+            }
+        }
+    }
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Flag-driven integration path for Arc-Flags / dynamic ALT / Reach / batching
+// ---------------------------------------------------------------------------
+
+struct Options {
+    std::string graph_file;
+    std::string query_file;
+    std::string output_file = "output.txt";
+    int32_t alt_k = 24;
+    std::string landmark_strategy = "farthest";
+    std::string landmarks_file = "landmarks.bin";
+    bool arcflags_enable = false;
+    bool build_arcflags = false;
+    int32_t arc_rows = 8;
+    int32_t arc_cols = 8;
+    std::string arcflags_file = "arcflags.bin";
+    bool reach_enable = false;
+    bool compute_reach_flag = false;
+    int32_t reach_samples = 200;
+    std::string reach_file = "reach.bin";
+    int32_t batch_threshold = 8;
+    int32_t verify_sample = 0;
+};
+
+static bool SPC_COLD parse_options(int argc, char** argv, Options& opt) {
+    vector<std::string> pos;
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        auto need = [&](const char* flag) -> const char* {
+            if (i + 1 >= argc) {
+                std::fprintf(stderr, "missing value for %s\n", flag);
+                std::exit(1);
+            }
+            return argv[++i];
+        };
+        if (a == "--graph") opt.graph_file = need("--graph");
+        else if (a == "--queries") opt.query_file = need("--queries");
+        else if (a == "--output") opt.output_file = need("--output");
+        else if (a == "--alt-k") opt.alt_k = std::atoi(need("--alt-k"));
+        else if (a == "--landmark-strategy") opt.landmark_strategy = need("--landmark-strategy");
+        else if (a == "--landmarks-file") opt.landmarks_file = need("--landmarks-file");
+        else if (a == "--arcflags-enable") opt.arcflags_enable = true;
+        else if (a == "--build-arcflags") opt.build_arcflags = true;
+        else if (a == "--arcflags-grid") {
+            opt.arc_rows = std::atoi(need("--arcflags-grid"));
+            opt.arc_cols = std::atoi(need("--arcflags-grid"));
+        } else if (a == "--arcflags-file") opt.arcflags_file = need("--arcflags-file");
+        else if (a == "--reach-enable") opt.reach_enable = true;
+        else if (a == "--compute-reach") opt.compute_reach_flag = true;
+        else if (a == "--reach-samples") opt.reach_samples = std::atoi(need("--reach-samples"));
+        else if (a == "--reach-file") opt.reach_file = need("--reach-file");
+        else if (a == "--batch-threshold") opt.batch_threshold = std::atoi(need("--batch-threshold"));
+        else if (a == "--verify-sample") opt.verify_sample = std::atoi(need("--verify-sample"));
+        else if (!a.empty() && a[0] == '-') {
+            std::fprintf(stderr, "unknown flag: %s\n", a.c_str());
+            return false;
+        } else {
+            pos.push_back(a);
+        }
+    }
+    if (!pos.empty() && opt.graph_file.empty()) opt.graph_file = pos[0];
+    if (pos.size() > 1 && opt.query_file.empty()) opt.query_file = pos[1];
+    if (pos.size() > 2) opt.output_file = pos[2];
+    if (opt.alt_k <= 0) opt.alt_k = 24;
+    if (opt.landmark_strategy != "farthest" &&
+        opt.landmark_strategy != "coords" &&
+        opt.landmark_strategy != "mixed") {
+        std::fprintf(stderr, "invalid --landmark-strategy: %s\n", opt.landmark_strategy.c_str());
+        return false;
+    }
+    return true;
+}
+
+static vector<Query> SPC_COLD read_queries_file(const char* qpath) {
+    FileIn in;
+    if (!in.open_file(qpath)) {
+        std::fprintf(stderr, "cannot open query file: %s\n", qpath);
+        std::exit(1);
+    }
+    Parser ps(in.data, in.size);
+    int32_t Q = ps.i32();
+    vector<Query> qs((size_t)Q);
+    for (int32_t i = 0; i < Q; ++i) {
+        qs[(size_t)i].s = ps.i32();
+        qs[(size_t)i].t = ps.i32();
+    }
+    return qs;
+}
+
+static void SPC_COLD sssp_heap(const CSR& g, int32_t src, vector<int64_t>& dist) {
+    using Item = std::pair<int64_t, int32_t>;
+    dist.assign((size_t)g.V, INT64_MAX);
+    std::priority_queue<Item, vector<Item>, std::greater<Item>> pq;
+    dist[(size_t)src] = 0;
+    pq.push({0, src});
+    while (!pq.empty()) {
+        auto it = pq.top(); pq.pop();
+        int64_t d = it.first;
+        int32_t u = it.second;
+        if (d != dist[(size_t)u]) continue;
+        for (int32_t e = g.head[(size_t)u]; e < g.head[(size_t)u + 1]; ++e) {
+            int32_t v = g.to[(size_t)e];
+            int64_t nd = d + (int64_t)g.w[(size_t)e];
+            if (nd < dist[(size_t)v]) {
+                dist[(size_t)v] = nd;
+                pq.push({nd, v});
+            }
         }
     }
 }
 
+static int64_t SPC_COLD astar_dynamic_query(const CSR& g, const LandmarkIndex& lm,
+                                   const ArcFlagsIndex* af,
+                                   const ReachIndex* reach,
+                                   int32_t s, int32_t t) {
+    if (s == t) return 0;
+    using Item = std::pair<int64_t, int32_t>;
+    vector<int64_t> dist((size_t)g.V, INT64_MAX);
+    vector<uint8_t> settled((size_t)g.V, 0);
+    std::priority_queue<Item, vector<Item>, std::greater<Item>> pq;
+    int32_t target_region = af && af->enabled() ? af->region_of(t) : 0;
+    dist[(size_t)s] = 0;
+    pq.push({lm.heuristic(s, t), s});
+    int64_t best = INT64_MAX;
+    while (!pq.empty()) {
+        auto [key, u] = pq.top(); pq.pop();
+        (void)key;
+        if (settled[(size_t)u]) continue;
+        int64_t du = dist[(size_t)u];
+        int64_t hu = lm.heuristic(u, t);
+        if (best != INT64_MAX && du + hu >= best) continue;
+        if (reach && reach->enabled()) {
+            uint32_t rv = (*reach)[u];
+            if (rv != UINT32_MAX && du > (int64_t)rv && hu > (int64_t)rv) continue;
+        }
+        settled[(size_t)u] = 1;
+        if (u == t) { best = du; break; }
+        for (int32_t e = g.head[(size_t)u]; e < g.head[(size_t)u + 1]; ++e) {
+            if (af && af->enabled() && !af->allow(e, target_region)) continue;
+            int32_t v = g.to[(size_t)e];
+            if (settled[(size_t)v]) continue;
+            int64_t nd = du + (int64_t)g.w[(size_t)e];
+            if (nd < dist[(size_t)v]) {
+                dist[(size_t)v] = nd;
+                pq.push({nd + lm.heuristic(v, t), v});
+            }
+        }
+    }
+    return best == INT64_MAX ? -1 : best;
+}
+
+static void SPC_COLD write_perf_csv(int64_t preproc_ms, double mem_mb, int64_t total_ms,
+                           const vector<int64_t>& query_us,
+                           bool arc_used, bool reach_used) {
+    double avg_ms = query_us.empty() ? 0.0 : (double)total_ms / (double)query_us.size();
+    vector<int64_t> tmp = query_us;
+    std::sort(tmp.begin(), tmp.end());
+    double p95_ms = tmp.empty() ? 0.0 : (double)tmp[(size_t)((tmp.size() - 1) * 95 / 100)] / 1000.0;
+    std::FILE* f = std::fopen("perf.csv", "wb");
+    if (!f) return;
+    std::fprintf(f, "preproc_time_ms,memory_overhead_MB,total_query_time_ms,avg_query_time_ms,p95_ms,arcflags_used,reach_used\n");
+    std::fprintf(f, "%lld,%.3f,%lld,%.6f,%.6f,%d,%d\n",
+                 (long long)preproc_ms, mem_mb, (long long)total_ms, avg_ms,
+                 p95_ms, arc_used ? 1 : 0, reach_used ? 1 : 0);
+    std::fclose(f);
+}
+
+static bool SPC_COLD verify_sample(const CSR& g, const vector<Query>& queries,
+                          const LandmarkIndex& lm, const ArcFlagsIndex* af,
+                          const ReachIndex* reach, int32_t n) {
+    if (n <= 0 || queries.empty()) return true;
+    BidirState st;
+    st.init(g.V);
+    int32_t checked = 0;
+    uint32_t seed = 0xC0FFEEu;
+    for (int32_t i = 0; i < n; ++i) {
+        seed = seed * 1664525u + 1013904223u;
+        const Query& q = queries[(size_t)(seed % queries.size())];
+        int64_t base = bidir_dijkstra(g, st, q.s, q.t);
+        int64_t opt = astar_dynamic_query(g, lm, af, reach, q.s, q.t);
+        if (base != opt) {
+            std::fprintf(stderr, "[verify] mismatch %d->%d baseline=%lld optimized=%lld\n",
+                         q.s, q.t, (long long)base, (long long)opt);
+            return false;
+        }
+        ++checked;
+    }
+    std::fprintf(stderr, "[verify] %d sampled queries matched baseline Dijkstra\n", checked);
+    return true;
+}
+
+static int SPC_COLD run_flagged_solver(const Options& opt) {
+    if (opt.graph_file.empty()) {
+        std::fprintf(stderr, "usage: ./solver --graph GRAPH [--queries QUERIES --output OUT] [flags]\n");
+        return 1;
+    }
+    using clk = std::chrono::steady_clock;
+    auto prep0 = clk::now();
+    CSR g;
+    build_csr(opt.graph_file.c_str(), g, true);
+    SPGraphView gv = graph_view(g);
+
+    ArcFlagsIndex af;
+    if (opt.build_arcflags) compute_arcflags(gv, opt.arc_rows, opt.arc_cols, opt.arcflags_file, af);
+    else if (opt.arcflags_enable && !load_arcflags(opt.arcflags_file, gv, af))
+        std::fprintf(stderr, "[arcflags] unavailable or incompatible; continuing without flags\n");
+
+    ReachIndex reach;
+    if (opt.compute_reach_flag) compute_reach(gv, opt.reach_samples, opt.reach_file, reach);
+    else if (opt.reach_enable && !load_reach(opt.reach_file, g.V, reach))
+        std::fprintf(stderr, "[reach] unavailable or incompatible; continuing without reach\n");
+
+    if (opt.query_file.empty()) return 0;
+
+    LandmarkIndex lm;
+    if (!load_landmarks(opt.landmarks_file, g.V, lm) || lm.K != opt.alt_k) {
+        compute_landmarks(gv, opt.alt_k, opt.landmark_strategy, opt.landmarks_file, lm);
+    }
+    int64_t preproc_ms = std::chrono::duration_cast<std::chrono::milliseconds>(clk::now() - prep0).count();
+    double mem_mb = ((double)af.flags.size() * sizeof(uint64_t) +
+                     (double)reach.reach.size() * sizeof(uint32_t) +
+                     (double)lm.dist.size() * sizeof(int32_t)) / 1048576.0;
+
+    vector<Query> queries = read_queries_file(opt.query_file.c_str());
+    const ArcFlagsIndex* afp = af.enabled() ? &af : nullptr;
+    const ReachIndex* rp = reach.enabled() ? &reach : nullptr;
+    if (opt.verify_sample > 0 && !verify_sample(g, queries, lm, afp, rp, opt.verify_sample)) return 2;
+
+    auto fallback = [&](int32_t s, int32_t t) -> int64_t {
+        return astar_dynamic_query(g, lm, afp, rp, s, t);
+    };
+    auto fsssp = [&](int32_t s, vector<int64_t>& dist) { sssp_heap(g, s, dist); };
+    auto rsssp = [&](int32_t t, vector<int64_t>& dist) { sssp_heap(g, t, dist); };
+
+    vector<int64_t> query_us;
+    query_us.reserve(queries.size());
+    auto q0 = clk::now();
+    if (opt.batch_threshold > 0) {
+        batch_answer_queries(gv, queries, opt.batch_threshold, fsssp, rsssp, fallback);
+    } else {
+        for (Query& q : queries) q.answer = fallback(q.s, q.t);
+    }
+    int64_t total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(clk::now() - q0).count();
+    int64_t per_us = queries.empty() ? 0 : (total_ms * 1000) / (int64_t)queries.size();
+    query_us.assign(queries.size(), per_us);
+
+    OutBuf ob;
+    if (!ob.open_file(opt.output_file.c_str(), 1u << 20)) {
+        std::fprintf(stderr, "cannot open output file: %s\n", opt.output_file.c_str());
+        return 1;
+    }
+    for (const Query& q : queries) ob.put_int64_nl(q.answer);
+    write_perf_csv(preproc_ms, mem_mb, total_ms, query_us, afp != nullptr, rp != nullptr);
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    bool has_flag = false;
+    for (int i = 1; i < argc; ++i) if (argv[i][0] == '-') has_flag = true;
+    if (has_flag) {
+        Options opt;
+        if (!parse_options(argc, argv, opt)) return 1;
+        return run_flagged_solver(opt);
+    }
     if (argc != 4) {
         std::fprintf(stderr, "usage: %s <graph_file> <query_file> <output_file>\n", argv[0]);
+        std::fprintf(stderr, "   or: %s --graph GRAPH --queries QUERIES --output OUT [optimization flags]\n", argv[0]);
         return 1;
     }
     CSR g;

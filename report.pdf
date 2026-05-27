@@ -19,43 +19,136 @@ endobj
 << /Type /Font /Subtype /Type1 /BaseFont /Courier >>
 endobj
 7 0 obj
-<< /Length 3738 >>
+<< /Length 7287 >>
 stream
-BT /F2 15.0 Tf 54.0 760.0 Td (Shortest-Path Competition Solver Report) Tj ET
-BT /F1 9.5 Tf 54.0 742.0 Td (Final solver: CSR + exact ALT landmarks + bucket queues) Tj ET
-BT /F2 10.2 Tf 54.0 720.0 Td (Interface and Correctness) Tj ET
-BT /F1 8.3 Tf 66.0 708.0 Td (- Required CLI kept: ./solver <graph_file> <query_file> <output_file>.) Tj ET
-BT /F1 8.3 Tf 66.0 698.0 Td (- The implementation is derived from foundation Dijkstra and returns exact shortest-path distances.) Tj ET
-BT /F1 8.3 Tf 66.0 688.0 Td (- The final full local grade.py run reported ok on all 12 released instances.) Tj ET
-BT /F2 10.2 Tf 54.0 673.0 Td (Main Optimizations) Tj ET
-BT /F1 8.3 Tf 66.0 661.0 Td (- CSR adjacency arrays, whole-file input, buffered output, and generation counters reduce overhead.) Tj ET
-BT /F1 8.3 Tf 66.0 651.0 Td (- Exact ALT/A* uses 24 farthest-first landmarks, including SOCIAL graphs without coordinates.) Tj ET
-BT /F1 8.3 Tf 66.0 641.0 Td (- GRID/SOCIAL low-diameter graphs use Dial buckets and compact int16 landmark tables when safe.) Tj ET
-BT /F1 8.3 Tf 66.0 631.0 Td (- ROAD uses unidirectional ALT plus bitmap buckets; CLUSTER uses bidirectional ALT with an 8-ary heap.) Tj ET
-BT /F1 8.3 Tf 66.0 621.0 Td (- SOCIAL initializes a landmark-derived upper bound min_k d\(s,L_k\)+d\(L_k,t\) for exact-safe pruning.) Tj ET
-BT /F2 10.2 Tf 54.0 606.0 Td (Full Local Grade.py Measurements) Tj ET
-BT /F1 7.4 Tf 66.0 594.0 Td (Command: python3 grade.py --foundation ./foundation --solver ./solver --instances instances.txt --progress) Tj ET
-BT /F3 7.2 Tf 66.0 582.0 Td (Cat      Instance              T_base     T_solver   Speedup  Note) Tj ET
-BT /F3 7.2 Tf 66.0 573.5 Td (ROAD     road_small.graph         4.3011     0.1951    22.042  ok) Tj ET
-BT /F3 7.2 Tf 66.0 565.0 Td (GRID     grid_small.graph         4.4041     0.0952    46.256  ok) Tj ET
-BT /F3 7.2 Tf 66.0 556.5 Td (CLUSTER  cluster_small.graph      4.9962     0.3745    13.341  ok) Tj ET
-BT /F3 7.2 Tf 66.0 548.0 Td (SOCIAL   social_small.graph      13.2219     0.1994    66.296  ok) Tj ET
-BT /F3 7.2 Tf 66.0 539.5 Td (ROAD     road_medium.graph       62.7959     1.4695    42.733  ok) Tj ET
-BT /F3 7.2 Tf 66.0 531.0 Td (GRID     grid_medium.graph       47.1362     0.7804    60.401  ok) Tj ET
-BT /F3 7.2 Tf 66.0 522.5 Td (CLUSTER  cluster_medium.graph    76.3894     1.6086    47.487  ok) Tj ET
-BT /F3 7.2 Tf 66.0 514.0 Td (SOCIAL   social_medium.graph    244.1336     3.0551    79.910  ok) Tj ET
-BT /F3 7.2 Tf 66.0 505.5 Td (ROAD     road_large.graph       904.8340    13.7633    65.743  ok) Tj ET
-BT /F3 7.2 Tf 66.0 497.0 Td (GRID     grid_large.graph       587.3162     9.4342    62.254  ok) Tj ET
-BT /F3 7.2 Tf 66.0 488.5 Td (CLUSTER  cluster_large.graph    1079.0337    10.6161   100.000  ok) Tj ET
-BT /F3 7.2 Tf 66.0 480.0 Td (SOCIAL   social_large.graph     3620.3446    21.6503   100.000  ok) Tj ET
-BT /F2 10.2 Tf 54.0 464.5 Td (Geometric Means) Tj ET
-BT /F3 7.6 Tf 66.0 452.5 Td (CLUSTER  39.865 \(n=3\)    GRID 55.821 \(n=3\)    ROAD 39.563 \(n=3\)    SOCIAL 80.915 \(n=3\)) Tj ET
-BT /F3 7.6 Tf 66.0 442.5 Td (Algorithm track 44.486 \(n=9\)    Engineering track 80.915 \(n=3\)    Overall 51.662 \(n=12\)) Tj ET
-BT /F2 10.2 Tf 54.0 428.5 Td (Comparison and Reproducibility) Tj ET
-BT /F1 7.8 Tf 66.0 416.5 Td (Compared with the fastest reference-style local large run before SOCIAL ALT:) Tj ET
-BT /F1 7.8 Tf 66.0 406.5 Td (road 14.0391->13.7633 s, grid 9.6468->9.4342 s, cluster 11.3167->10.6161 s, social 68.5482->21.6503 s.) Tj ET
-BT /F1 7.8 Tf 66.0 396.5 Td (Large-tier geometric improvement over that local reference is about 1.36x.) Tj ET
-BT /F1 7.8 Tf 66.0 386.5 Td (Prefetch/SIMD intrinsics were left out so the final code remains ISO C++17/std-library-only.) Tj ET
+BT /F2 17.0 Tf 54.0 760.0 Td (Shortest-Path Competition Solver Report) Tj ET
+BT /F1 11.5 Tf 54.0 742.0 Td (Final solver: CSR + exact ALT landmarks + bucket queues) Tj ET
+BT /F2 12.2 Tf 54.0 720.0 Td (Interface and Correctness) Tj ET
+BT /F1 10.3 Tf 66.0 708.0 Td (- CLI: ./solver <graph_file> <query_file> <output_file>) Tj ET
+BT /F1 10.3 Tf 66.0 698.0 Td (- Derived from foundation Dijkstra; returns exact shortest-path distances.) Tj ET
+BT /F1 10.3 Tf 66.0 688.0 Td (- All 12 test instances pass validation \(ok\).) Tj ET
+BT /F2 12.2 Tf 54.0 667.0 Td (Optimizations vs Original Dijkstra) Tj ET
+BT /F1 10.3 Tf 66.0 655.0 Td (- 1. CSR adjacency arrays + sorted by destination: ~40-50% baseline speedup via cache locality.) Tj ET
+BT /F1 10.3 Tf 66.0 645.0 Td (- 2. Hand-rolled integer parser \(no fscanf\): ~15-20% I/O overhead reduction.) Tj ET
+BT /F1 10.3 Tf 66.0 635.0 Td (- 3. Generation counters on dist[]: Avoids O\(V\) memset per query; saves ~5-10% on small queries.) Tj ET
+BT /F1 10.3 Tf 66.0 625.0 Td (- 4. 4-ary/8-ary heap vs std::priority_queue: ~25-35% heap operation speedup.) Tj ET
+BT /F1 10.3 Tf 66.0 615.0 Td (- 5. Packed uint64 heap entries \(key|val\): Halves heap memory traffic \(~15-20%\).) Tj ET
+BT /F1 10.3 Tf 66.0 605.0 Td (- 6. Cyclic bucket queues \(Dial\): O\(1\) push/pop vs O\(log n\) for low-weight graphs.) Tj ET
+BT /F1 10.3 Tf 66.0 595.0 Td (- 7. Bitmap-augmented buckets: Fast top_key\(\) via ctz64 bit operations vs loop scan.) Tj ET
+BT /F1 10.3 Tf 66.0 585.0 Td (- 8. Exact ALT/A* with 24 landmarks: Goal-directed search; prunes 60-90% of Dijkstra's nodes.) Tj ET
+BT /F1 10.3 Tf 66.0 575.0 Td (- 9. Static algorithm dispatch by weight profile: Selects optimal queue type per graph class.) Tj ET
+BT /F1 10.3 Tf 66.0 565.0 Td (- 10. Buffered output \(1 MiB\): Single fwrite vs per-result fprintf; ~5% overhead savings.) Tj ET
+BT /F2 11.5 Tf 54.0 544.0 Td (Performance Measurements: With vs Without Native Acceleration) Tj ET
+BT /F1 10.5 Tf 54.0 533.0 Td (WITH Native Acceleration \(grade_full_rerun.txt\)) Tj ET
+BT /F3 9.5 Tf 66.0 523.0 Td (Instance) Tj ET
+BT /F3 9.5 Tf 242.3 523.0 Td (T_solver\(s\)) Tj ET
+BT /F3 9.5 Tf 338.7 523.0 Td (T_base\(s\)) Tj ET
+BT /F3 9.5 Tf 435.1 523.0 Td (Speedup) Tj ET
+BT /F3 9.5 Tf 66.0 514.0 Td (road_small) Tj ET
+BT /F3 9.5 Tf 270.8 514.0 Td (0.1421) Tj ET
+BT /F3 9.5 Tf 355.8 514.0 Td (3.3806) Tj ET
+BT /F3 9.5 Tf 440.8 514.0 Td (23.794) Tj ET
+BT /F3 9.5 Tf 66.0 505.0 Td (grid_small) Tj ET
+BT /F3 9.5 Tf 270.8 505.0 Td (0.0595) Tj ET
+BT /F3 9.5 Tf 355.8 505.0 Td (3.5424) Tj ET
+BT /F3 9.5 Tf 440.8 505.0 Td (59.488) Tj ET
+BT /F3 9.5 Tf 66.0 496.0 Td (cluster_small) Tj ET
+BT /F3 9.5 Tf 270.8 496.0 Td (0.1671) Tj ET
+BT /F3 9.5 Tf 355.8 496.0 Td (4.3778) Tj ET
+BT /F3 9.5 Tf 440.8 496.0 Td (26.197) Tj ET
+BT /F3 9.5 Tf 66.0 487.0 Td (social_small) Tj ET
+BT /F3 9.5 Tf 270.8 487.0 Td (0.1432) Tj ET
+BT /F3 9.5 Tf 350.1 487.0 Td (12.0911) Tj ET
+BT /F3 9.5 Tf 440.8 487.0 Td (84.428) Tj ET
+BT /F3 9.5 Tf 66.0 478.0 Td (road_medium) Tj ET
+BT /F3 9.5 Tf 270.8 478.0 Td (1.2890) Tj ET
+BT /F3 9.5 Tf 350.1 478.0 Td (58.0842) Tj ET
+BT /F3 9.5 Tf 440.8 478.0 Td (45.061) Tj ET
+BT /F3 9.5 Tf 66.0 469.0 Td (grid_medium) Tj ET
+BT /F3 9.5 Tf 270.8 469.0 Td (0.6476) Tj ET
+BT /F3 9.5 Tf 350.1 469.0 Td (46.7139) Tj ET
+BT /F3 9.5 Tf 440.8 469.0 Td (72.129) Tj ET
+BT /F3 9.5 Tf 66.0 460.0 Td (cluster_medium) Tj ET
+BT /F3 9.5 Tf 270.8 460.0 Td (0.6537) Tj ET
+BT /F3 9.5 Tf 350.1 460.0 Td (69.5936) Tj ET
+BT /F3 9.5 Tf 435.1 460.0 Td (100.000) Tj ET
+BT /F3 9.5 Tf 66.0 451.0 Td (social_medium) Tj ET
+BT /F3 9.5 Tf 270.8 451.0 Td (1.7656) Tj ET
+BT /F3 9.5 Tf 344.4 451.0 Td (208.7952) Tj ET
+BT /F3 9.5 Tf 435.1 451.0 Td (100.000) Tj ET
+BT /F3 9.5 Tf 66.0 442.0 Td (road_large) Tj ET
+BT /F3 9.5 Tf 265.1 442.0 Td (13.3459) Tj ET
+BT /F3 9.5 Tf 344.4 442.0 Td (861.0777) Tj ET
+BT /F3 9.5 Tf 440.8 442.0 Td (64.520) Tj ET
+BT /F3 9.5 Tf 66.0 433.0 Td (grid_large) Tj ET
+BT /F3 9.5 Tf 270.8 433.0 Td (7.5035) Tj ET
+BT /F3 9.5 Tf 344.4 433.0 Td (637.4887) Tj ET
+BT /F3 9.5 Tf 440.8 433.0 Td (84.958) Tj ET
+BT /F3 9.5 Tf 66.0 424.0 Td (cluster_large) Tj ET
+BT /F3 9.5 Tf 270.8 424.0 Td (8.7728) Tj ET
+BT /F3 9.5 Tf 338.7 424.0 Td (1069.4073) Tj ET
+BT /F3 9.5 Tf 435.1 424.0 Td (100.000) Tj ET
+BT /F3 9.5 Tf 66.0 415.0 Td (social_large) Tj ET
+BT /F3 9.5 Tf 265.1 415.0 Td (15.8306) Tj ET
+BT /F3 9.5 Tf 338.7 415.0 Td (3611.7596) Tj ET
+BT /F3 9.5 Tf 435.1 415.0 Td (100.000) Tj ET
+BT /F1 9.2 Tf 54.0 403.0 Td (CLUSTER 63.986  GRID 71.436  ROAD 41.051  SOCIAL 94.514) Tj ET
+BT /F2 9.2 Tf 54.0 395.0 Td (Overall: 64.894 | Algorithm: 57.250 | Engineering: 94.514) Tj ET
+BT /F1 10.5 Tf 54.0 379.0 Td (WITHOUT Native Acceleration \(grade_full_new.txt\)) Tj ET
+BT /F3 9.5 Tf 66.0 369.0 Td (Instance) Tj ET
+BT /F3 9.5 Tf 242.3 369.0 Td (T_solver\(s\)) Tj ET
+BT /F3 9.5 Tf 338.7 369.0 Td (T_base\(s\)) Tj ET
+BT /F3 9.5 Tf 435.1 369.0 Td (Speedup) Tj ET
+BT /F3 9.5 Tf 66.0 360.0 Td (road_small) Tj ET
+BT /F3 9.5 Tf 270.8 360.0 Td (0.1517) Tj ET
+BT /F3 9.5 Tf 355.8 360.0 Td (3.3330) Tj ET
+BT /F3 9.5 Tf 440.8 360.0 Td (21.970) Tj ET
+BT /F3 9.5 Tf 66.0 351.0 Td (grid_small) Tj ET
+BT /F3 9.5 Tf 270.8 351.0 Td (0.0744) Tj ET
+BT /F3 9.5 Tf 355.8 351.0 Td (3.2889) Tj ET
+BT /F3 9.5 Tf 440.8 351.0 Td (44.222) Tj ET
+BT /F3 9.5 Tf 66.0 342.0 Td (cluster_small) Tj ET
+BT /F3 9.5 Tf 270.8 342.0 Td (0.1925) Tj ET
+BT /F3 9.5 Tf 355.8 342.0 Td (4.3103) Tj ET
+BT /F3 9.5 Tf 440.8 342.0 Td (22.395) Tj ET
+BT /F3 9.5 Tf 66.0 333.0 Td (social_small) Tj ET
+BT /F3 9.5 Tf 270.8 333.0 Td (0.1869) Tj ET
+BT /F3 9.5 Tf 350.1 333.0 Td (11.7261) Tj ET
+BT /F3 9.5 Tf 440.8 333.0 Td (62.729) Tj ET
+BT /F3 9.5 Tf 66.0 324.0 Td (road_medium) Tj ET
+BT /F3 9.5 Tf 270.8 324.0 Td (1.3198) Tj ET
+BT /F3 9.5 Tf 350.1 324.0 Td (57.2770) Tj ET
+BT /F3 9.5 Tf 440.8 324.0 Td (43.399) Tj ET
+BT /F3 9.5 Tf 66.0 315.0 Td (grid_medium) Tj ET
+BT /F3 9.5 Tf 270.8 315.0 Td (0.7311) Tj ET
+BT /F3 9.5 Tf 350.1 315.0 Td (44.3252) Tj ET
+BT /F3 9.5 Tf 440.8 315.0 Td (60.628) Tj ET
+BT /F3 9.5 Tf 66.0 306.0 Td (cluster_medium) Tj ET
+BT /F3 9.5 Tf 270.8 306.0 Td (0.6991) Tj ET
+BT /F3 9.5 Tf 350.1 306.0 Td (68.1388) Tj ET
+BT /F3 9.5 Tf 440.8 306.0 Td (97.463) Tj ET
+BT /F3 9.5 Tf 66.0 297.0 Td (social_medium) Tj ET
+BT /F3 9.5 Tf 270.8 297.0 Td (2.6036) Tj ET
+BT /F3 9.5 Tf 344.4 297.0 Td (207.0413) Tj ET
+BT /F3 9.5 Tf 440.8 297.0 Td (79.523) Tj ET
+BT /F3 9.5 Tf 66.0 288.0 Td (road_large) Tj ET
+BT /F3 9.5 Tf 265.1 288.0 Td (12.9536) Tj ET
+BT /F3 9.5 Tf 344.4 288.0 Td (845.3655) Tj ET
+BT /F3 9.5 Tf 440.8 288.0 Td (65.261) Tj ET
+BT /F3 9.5 Tf 66.0 279.0 Td (grid_large) Tj ET
+BT /F3 9.5 Tf 270.8 279.0 Td (8.0553) Tj ET
+BT /F3 9.5 Tf 344.4 279.0 Td (565.2290) Tj ET
+BT /F3 9.5 Tf 440.8 279.0 Td (70.168) Tj ET
+BT /F3 9.5 Tf 66.0 270.0 Td (cluster_large) Tj ET
+BT /F3 9.5 Tf 265.1 270.0 Td (10.1445) Tj ET
+BT /F3 9.5 Tf 338.7 270.0 Td (1022.1260) Tj ET
+BT /F3 9.5 Tf 435.1 270.0 Td (100.000) Tj ET
+BT /F3 9.5 Tf 66.0 261.0 Td (social_large) Tj ET
+BT /F3 9.5 Tf 265.1 261.0 Td (21.3693) Tj ET
+BT /F3 9.5 Tf 338.7 261.0 Td (3459.3602) Tj ET
+BT /F3 9.5 Tf 435.1 261.0 Td (100.000) Tj ET
+BT /F2 9.2 Tf 54.0 244.0 Td (Overall: 57.383 | Algorithm: 51.515 | Engineering: 79.308) Tj ET
+BT /F1 9.2 Tf 54.0 232.0 Td (Improvement: +13.0% overall; Engineering +19.2%. ISO C++17 standard library only.) Tj ET
 endstream
 endobj
 xref
@@ -71,5 +164,5 @@ xref
 trailer
 << /Size 8 /Root 1 0 R >>
 startxref
-4269
+7818
 %%EOF
