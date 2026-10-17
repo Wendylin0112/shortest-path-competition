@@ -1,5 +1,21 @@
 # Shortest-Path Algorithms Competition
 
+## Project overview
+
+**Goal:** Accelerate exact shortest-path queries in C++17 while preserving the reference Dijkstra solver's output.
+
+**Implemented improvements:** cache-friendly CSR adjacency lists, buffered I/O, reusable per-query state, specialized priority queues, and ALT/A* landmark heuristics. The solver also uses graph-family-specific strategies for road, grid, cluster, and social-network instances.
+
+**Reported evaluation:** All 12 released test instances passed correctness checks. The documented **overall geometric-mean speedup is 64.894×** versus the foundation solver, based on the repository's grading procedure and test hardware. These results are specific to the released benchmarks, not a general performance guarantee.
+
+- [Read the optimization report](./optimization_report.md)
+- [Inspect the optimized solver](./solver.cpp)
+- [View the grading log](./grade_full.txt)
+
+---
+
+## Competition setup and original task instructions
+
 Your job: take the provided Dijkstra implementation and make it **faster** on the
 released graph instances, without changing its output.
 
